@@ -1,0 +1,159 @@
+======================================================================
+SIH PS-10 - Training and Evaluation Results
+Site: 6
+Date: 2025-11-16 22:01:19
+======================================================================
+
+
+======================================================================
+Training Models for Site 6
+======================================================================
+
+Loading data...
+Train set: 19776 rows
+Test set: 6577 rows
+
+Preparing features...
+Number of features: 23
+
+----------------------------------------------------------------------
+Training O3 Model...
+----------------------------------------------------------------------
+
+----------------------------------------------------------------------
+Training NO2 Model...
+----------------------------------------------------------------------
+
+Making predictions...
+
+======================================================================
+O3 TARGET EVALUATION
+======================================================================
+
+TRAIN SET:
+  RMSE: 4.7443
+  R²:   0.9523
+  RIA:  0.9874
+
+TEST SET:
+  RMSE: 14.8686
+  R²:   0.8131
+  RIA:  0.9372
+
+BASELINE (O3_forecast) on TEST SET:
+  RMSE: 41.8497
+  R²:   -0.4811
+  RIA:  0.3633
+
+  Improvement: 64.47% RMSE reduction
+
+======================================================================
+NO2 TARGET EVALUATION
+======================================================================
+
+TRAIN SET:
+  RMSE: 3.9214
+  R²:   0.9454
+  RIA:  0.9855
+
+TEST SET:
+  RMSE: 10.4464
+  R²:   0.7719
+  RIA:  0.9285
+
+BASELINE (NO2_forecast) on TEST SET:
+  RMSE: 56.9675
+  R²:   -5.7848
+  RIA:  0.2493
+
+  Improvement: 81.66% RMSE reduction
+
+======================================================================
+PER-HOUR ERROR ANALYSIS
+======================================================================
+
+Average Absolute Error by Hour (O3):
+  Hour  0: 6.7461
+  Hour  1: 3.7194
+  Hour  2: 4.1788
+  Hour  3: 5.4250
+  Hour  4: 6.2064
+  Hour  5: 6.7532
+  Hour  6: 8.8067
+  Hour  7: 9.6803
+  Hour  8: 10.7275
+  Hour  9: 10.3687
+  Hour 10: 11.0062
+  Hour 11: 12.2399
+  Hour 12: 13.1095
+  Hour 13: 11.1306
+  Hour 14: 9.8509
+  Hour 15: 7.6512
+  Hour 16: 6.3301
+  Hour 17: 6.2582
+  Hour 18: 6.8334
+  Hour 19: 7.1808
+  Hour 20: 6.6041
+  Hour 21: 7.9162
+  Hour 22: 6.3002
+  Hour 23: 5.0709
+
+Average Absolute Error by Hour (NO2):
+  Hour  0: 7.4498
+  Hour  1: 4.2876
+  Hour  2: 4.6604
+  Hour  3: 6.5290
+  Hour  4: 6.7449
+  Hour  5: 4.9047
+  Hour  6: 4.4298
+  Hour  7: 3.7256
+  Hour  8: 3.0350
+  Hour  9: 2.6339
+  Hour 10: 3.0718
+  Hour 11: 3.4475
+  Hour 12: 5.8838
+  Hour 13: 6.8193
+  Hour 14: 8.2481
+  Hour 15: 10.4492
+  Hour 16: 9.4293
+  Hour 17: 7.5023
+  Hour 18: 7.3612
+  Hour 19: 6.9882
+  Hour 20: 6.6268
+  Hour 21: 5.9613
+  Hour 22: 6.8105
+  Hour 23: 5.1058
+
+Overall Average Error - O3: 7.9204
+Overall Average Error - NO2: 5.9213
+
+======================================================================
+Retraining on Full Training Data - Site 6
+======================================================================
+
+Models retrained on full training data
+
+Saving trained models...
+
+[OK] Models saved as pickle: Data_SIH_2025\models\site_6_models.pkl
+[OK] Models saved as joblib: Data_SIH_2025\models\site_6_models.joblib
+
+======================================================================
+Processing Unseen Data for Site 6
+======================================================================
+
+Loaded 11160 rows from unseen data
+Unseen data processed (using forecast values as lag feature proxies)
+
+======================================================================
+Predicting for Unseen Data - Site 6
+======================================================================
+
+Making predictions...
+Generated predictions for 11160 rows
+
+[OK] Predictions saved to: Data_SIH_2025\predictions\site_6_predictions.csv
+
+======================================================================
+[OK] All results saved to: Data_SIH_2025\results\site_6_results.txt
+======================================================================
