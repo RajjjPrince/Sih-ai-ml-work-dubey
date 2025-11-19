@@ -1,0 +1,89 @@
+======================================================================
+SIH PS-10 - Training and Evaluation Results
+Site: unified
+Date: 2025-11-16 22:04:44
+======================================================================
+
+Loading data from all sites...
+  Loaded Site 1: 18816 train, 6265 test rows
+  Loaded Site 2: 19488 train, 6481 test rows
+  Loaded Site 3: 16440 train, 5473 test rows
+  Loaded Site 4: 18384 train, 6121 test rows
+  Loaded Site 5: 18816 train, 6265 test rows
+  Loaded Site 6: 19776 train, 6577 test rows
+  Loaded Site 7: 17088 train, 5689 test rows
+
+Combining data from 7 sites...
+Combined training set: 128808 rows
+Combined test set: 42871 rows
+
+Preparing features...
+Number of features: 24
+
+----------------------------------------------------------------------
+Training Unified O3 Model...
+----------------------------------------------------------------------
+
+----------------------------------------------------------------------
+Training Unified NO2 Model...
+----------------------------------------------------------------------
+
+Making predictions...
+
+======================================================================
+UNIFIED O3 MODEL EVALUATION
+======================================================================
+
+TRAIN SET:
+  RMSE: 8.2975
+  R²:   0.9408
+  RIA:  0.9845
+
+TEST SET:
+  RMSE: 8.5782
+  R²:   0.9329
+  RIA:  0.9820
+
+BASELINE (O3_forecast) on TEST SET:
+  RMSE: 39.8230
+  R²:   -0.4454
+  RIA:  0.3832
+
+  Improvement: 78.46% RMSE reduction
+
+======================================================================
+UNIFIED NO2 MODEL EVALUATION
+======================================================================
+
+TRAIN SET:
+  RMSE: 7.5746
+  R²:   0.9343
+  RIA:  0.9826
+
+TEST SET:
+  RMSE: 9.0503
+  R²:   0.8956
+  RIA:  0.9712
+
+BASELINE (NO2_forecast) on TEST SET:
+  RMSE: 63.4153
+  R²:   -4.1257
+  RIA:  0.2905
+
+  Improvement: 85.73% RMSE reduction
+
+======================================================================
+Retraining on Full Combined Data
+======================================================================
+
+Unified models retrained on full combined data
+
+Saving unified models...
+
+[OK] Models saved as pickle: Data_SIH_2025\models\site_unified_models.pkl
+[OK] Models saved as joblib: Data_SIH_2025\models\site_unified_models.joblib
+
+======================================================================
+[OK] Unified model training complete!
+[OK] Results saved to: Data_SIH_2025\results\site_unified_results.txt
+======================================================================
