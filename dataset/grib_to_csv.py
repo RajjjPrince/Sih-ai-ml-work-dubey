@@ -1,259 +1,272 @@
+#!/usr/bin/env python3
 """
-Utility script to convert downloaded CAMS *.grib files into CSV files.
-Each site's CSV files are stored under a dedicated folder inside the
-configured output directory.
-"""
+grib_to_csv_pure_fixed.py
 
-import argparse
+Pure-Python GRIB -> CSV extractor that works with various eccodes Python API versions.
+
+- Reads messages one-by-one using the eccodes Python binding
+- Groups by shortName, writes small temporary GRIBs per shortName
+- Opens temp GRIBs using xarray/cfgrib, converts to DataFrame
+- Merges monthly files per site and writes site CSVs in site_csv/
+"""
+import warnings
+from pathlib import Path
+import re
+import tempfile
 import os
-import sys
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional
-
 import pandas as pd
 import xarray as xr
-import cfgrib
-import eccodes
+from tqdm import tqdm
+
+# import eccodes module and use functions dynamically (robust to API name differences)
+import eccodes as ecc
+
+warnings.filterwarnings("ignore", message=".*edition.*")
+warnings.filterwarnings("ignore", category=UserWarning)
+
+INPUT_DIR = Path("cams_downloads_monthly")
+OUTPUT_DIR = Path("site_csv")
+OUTPUT_DIR.mkdir(exist_ok=True)
+
+# match your filenames like: cams_site_1_2019-01.grib
+FNAME_RE = re.compile(r"cams_site_(\d+)_(\d{4})-(\d{2})\.grib$", re.IGNORECASE)
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Convert CAMS GRIB files to CSV per site.")
-    parser.add_argument(
-        "--input-dir",
-        default="cams_downloads_monthly",
-        help="Directory that contains the *.grib files.",
-    )
-    parser.add_argument(
-        "--output-dir",
-        default="site_csv",
-        help="Directory where site-wise CSV folders will be created.",
-    )
-    parser.add_argument(
-        "--overwrite",
-        action="store_true",
-        help="Regenerate CSV files even if they already exist.",
-    )
-    parser.add_argument(
-        "--site",
-        type=int,
-        help="If provided, only convert files for this 1-based site id.",
-    )
-    return parser.parse_args()
+def list_files():
+    if not INPUT_DIR.exists():
+        print("INPUT_DIR not found:", INPUT_DIR)
+        return []
+    return sorted([p for p in INPUT_DIR.iterdir() if p.is_file() and p.suffix.lower() == ".grib"])
 
 
-def extract_site_id(filename: str) -> Optional[int]:
-    """Pull the 1-based site id from filenames like cams_site_6_2019-01.grib."""
-    name = os.path.basename(filename)
-    parts = name.split("_")
-    if len(parts) < 4:
+def parse_fname(p):
+    m = FNAME_RE.match(p.name)
+    if not m:
         return None
-    try:
-        return int(parts[2])
-    except ValueError:
-        return None
+    return int(m.group(1)), int(m.group(2)), int(m.group(3))
 
 
-def discover_filter_groups(grib_path: str) -> List[Dict[str, object]]:
-    """Inspect the GRIB file and return distinct filter_by_keys combinations."""
-    combos = {}
-    with open(grib_path, "rb") as fh:
+# dynamic wrappers for eccodes functions (safe if name differs across versions)
+def _codes_new_from_file(fobj):
+    # try common names
+    for name in ("codes_grib_new_from_file", "codes_new_from_file", "codes_new_from_file_stream"):
+        fn = getattr(ecc, name, None)
+        if callable(fn):
+            try:
+                return fn(fobj)
+            except Exception:
+                # let caller handle None/Exceptions
+                raise
+    raise RuntimeError("No eccodes 'new_from_file' function found")
+
+
+def _codes_get(handle, key):
+    # typical name is codes_get
+    fn = getattr(ecc, "codes_get", None)
+    if callable(fn):
+        return fn(handle, key)
+    # try alternative
+    fn2 = getattr(ecc, "get", None)
+    if callable(fn2):
+        return fn2(handle, key)
+    raise RuntimeError("No eccodes 'codes_get' function found")
+
+
+def _codes_get_message(handle):
+    fn = getattr(ecc, "codes_get_message", None)
+    if callable(fn):
+        return fn(handle)
+    # try alternative names (some builds differ)
+    for alt in ("get_message", "codes_message_get"):
+        fn2 = getattr(ecc, alt, None)
+        if callable(fn2):
+            return fn2(handle)
+    raise RuntimeError("No eccodes 'codes_get_message' function found")
+
+
+def _codes_handle_delete(handle):
+    # try several possible cleanup function names
+    for name in ("codes_handle_delete", "codes_release", "codes_handle_free", "codes_close"):
+        fn = getattr(ecc, name, None)
+        if callable(fn):
+            try:
+                fn(handle)
+            except Exception:
+                # ignore errors on deletion
+                pass
+            return
+    # if none found, nothing to do
+
+
+# read messages grouped by shortName
+def extract_messages_by_shortName(path):
+    msg_dict = {}
+    # open file in binary mode and iterate messages
+    with open(path, "rb") as fin:
         while True:
             try:
-                gid = eccodes.codes_grib_new_from_file(fh)
-            except eccodes.CodesInternalError:
+                h = _codes_new_from_file(fin)
+            except Exception:
                 break
-
-            if gid is None:
+            if h is None:
                 break
-
-            combo: Dict[str, object] = {
-                "edition": int(eccodes.codes_get_long(gid, "edition")),
-                "shortName": eccodes.codes_get_string(gid, "shortName"),
-            }
-            if eccodes.codes_is_defined(gid, "typeOfLevel"):
-                combo["typeOfLevel"] = eccodes.codes_get_string(gid, "typeOfLevel")
-            if eccodes.codes_is_defined(gid, "level"):
-                combo["level"] = float(eccodes.codes_get_double(gid, "level"))
-
-            # Include spatial metadata to separate tiles with slightly different coords.
-            for key in (
-                "latitudeOfFirstGridPointInDegrees",
-                "latitudeOfLastGridPointInDegrees",
-                "longitudeOfFirstGridPointInDegrees",
-                "longitudeOfLastGridPointInDegrees",
-                "latitude",
-                "longitude",
-            ):
-                if eccodes.codes_is_defined(gid, key):
-                    combo[key] = float(eccodes.codes_get_double(gid, key))
-
-            key = tuple(sorted(combo.items()))
-            combos.setdefault(key, combo)
-            eccodes.codes_release(gid)
-
-    return list(combos.values())
+            try:
+                sn = None
+                try:
+                    sn = _codes_get(h, "shortName")
+                except Exception:
+                    sn = None
+                # get raw message bytes
+                try:
+                    msg = _codes_get_message(h)
+                except Exception:
+                    msg = None
+                # free handle
+                try:
+                    _codes_handle_delete(h)
+                except Exception:
+                    pass
+                if sn and msg:
+                    msg_dict.setdefault(sn, []).append(msg)
+            except Exception:
+                try:
+                    _codes_handle_delete(h)
+                except Exception:
+                    pass
+                continue
+    return msg_dict
 
 
-def load_grib_datasets(grib_path: str):
-    """Return a list of xarray datasets contained in the GRIB file."""
-    base_kwargs = {"indexpath": ""}  # avoid writing .idx files next to grib
+def write_temp_grib(messages, sn):
+    # write raw bytes to a temporary file; return path
+    tf = tempfile.NamedTemporaryFile(prefix=f"tmp_{sn}_", suffix=".grib", delete=False)
+    tf_name = tf.name
+    tf.close()
+    with open(tf_name, "wb") as out:
+        for m in messages:
+            out.write(m)
+    return Path(tf_name)
 
+
+def ds_to_df(ds):
+    # robustly convert xarray dataset to dataframe
     try:
-        ds = xr.open_dataset(grib_path, engine="cfgrib", backend_kwargs=base_kwargs)
-        return [ds]
-    except cfgrib.dataset.DatasetBuildError:
-        pass
-
-    datasets = []
-    for filter_keys in discover_filter_groups(grib_path):
-        backend_kwargs = {**base_kwargs, "filter_by_keys": filter_keys}
-        try:
-            ds = xr.open_dataset(grib_path, engine="cfgrib", backend_kwargs=backend_kwargs)
-            datasets.append(ds)
-        except Exception as exc:
-            print(f"[warn] filter {filter_keys} failed: {exc}")
-
-    if datasets:
-        return datasets
-
-    return cfgrib.open_datasets(grib_path, backend_kwargs=base_kwargs)
-
-
-def handle_via_cfgrib(grib_path: str):
-    datasets = load_grib_datasets(grib_path)
-    if not datasets:
-        raise RuntimeError("No datasets found in GRIB file.")
-
-    merged = xr.merge(
-        datasets,
-        compat="override",  # tolerate tiny coord rounding differences
-        combine_attrs="drop_conflicts",
-    )
-
-    df = merged.to_dataframe().reset_index()
-    merged.close()
-    for ds in datasets:
-        ds.close()
+        df = ds.to_dataframe().reset_index()
+    except Exception:
+        parts = []
+        for v in ds.data_vars:
+            try:
+                parts.append(ds[v].to_dataframe().reset_index())
+            except Exception:
+                continue
+        if not parts:
+            return pd.DataFrame()
+        df = parts[0]
+        for p in parts[1:]:
+            df = pd.merge(df, p, how="outer")
+    if "time" in df.columns:
+        df["time"] = pd.to_datetime(df["time"])
     return df
 
 
-def build_valid_time(data_date: int, data_time: int, step_hours: int) -> datetime:
-    base = datetime.strptime(str(data_date), "%Y%m%d")
-    hour = data_time // 100
-    minute = data_time % 100
-    base = base + timedelta(hours=hour, minutes=minute)
-    return base + timedelta(hours=step_hours)
+def process_single_file(path):
+    msg_by_sn = extract_messages_by_shortName(path)
+    if not msg_by_sn:
+        # final fallback: try opening the file with cfgrib directly (errors ignored)
+        try:
+            ds = xr.open_dataset(str(path), engine="cfgrib", backend_kwargs={"errors": "ignore"})
+            df = ds_to_df(ds)
+            ds.close()
+            return df
+        except Exception:
+            return None
 
-
-def handle_via_eccodes(grib_path: str) -> pd.DataFrame:
-    rows: Dict[tuple, Dict[str, object]] = {}
-    with open(grib_path, "rb") as fh:
-        while True:
+    dfs = []
+    temp_paths = []
+    for sn, msgs in msg_by_sn.items():
+        try:
+            tp = write_temp_grib(msgs, sn)
+            temp_paths.append(tp)
+            # open with cfgrib
             try:
-                gid = eccodes.codes_grib_new_from_file(fh)
-            except eccodes.CodesInternalError:
-                break
+                ds = xr.open_dataset(str(tp), engine="cfgrib", backend_kwargs={"errors": "ignore"})
+                df_sn = ds_to_df(ds)
+                ds.close()
+                if df_sn is not None and not df_sn.empty:
+                    dfs.append(df_sn)
+            except Exception:
+                # ignore failure for this shortName
+                pass
+        except Exception:
+            pass
 
-            if gid is None:
-                break
+    # cleanup temp files
+    for t in temp_paths:
+        try:
+            t.unlink(missing_ok=True)
+        except Exception:
+            pass
 
-            short_name = eccodes.codes_get_string(gid, "shortName")
-            data_date = eccodes.codes_get_long(gid, "dataDate")
-            data_time = eccodes.codes_get_long(gid, "dataTime")
-            step = int(eccodes.codes_get_double(gid, "step"))
-            valid_time = build_valid_time(data_date, data_time, step)
+    if not dfs:
+        return None
 
-            level = eccodes.codes_get_double(gid, "level") if eccodes.codes_is_defined(gid, "level") else None
-            latitudes = eccodes.codes_get_array(gid, "latitudes")
-            longitudes = eccodes.codes_get_array(gid, "longitudes")
-            values = eccodes.codes_get_array(gid, "values")
+    # If time exists, merge on time index; else concat across columns
+    if any("time" in d.columns for d in dfs):
+        dfs_idx = [d.set_index("time") for d in dfs if "time" in d.columns]
+        merged = pd.concat(dfs_idx, axis=1, join="outer", sort=True).reset_index()
+    else:
+        merged = pd.concat(dfs, axis=1, join="outer")
 
-            for lat, lon, val in zip(latitudes, longitudes, values):
-                key = (valid_time, round(float(lat), 6), round(float(lon), 6), level)
-                row = rows.setdefault(
-                    key,
-                    {
-                        "valid_time": valid_time.isoformat(),
-                        "latitude": round(float(lat), 6),
-                        "longitude": round(float(lon), 6),
-                    },
-                )
-                if level is not None:
-                    row["level"] = level
-                row[short_name] = float(val)
-
-            eccodes.codes_release(gid)
-
-    if not rows:
-        raise RuntimeError("ECCODES fallback could not decode any messages.")
-
-    return pd.DataFrame(rows.values())
-
-
-def grib_to_csv(grib_path: str, csv_path: str) -> None:
-    """Convert a single GRIB file into a CSV file using xarray/cfgrib."""
-    try:
-        df = handle_via_cfgrib(grib_path)
-    except Exception as cf_err:
-        print(f"[info] cfgrib merge failed ({cf_err}); falling back to eccodes decode.")
-        df = handle_via_eccodes(grib_path)
-
-    os.makedirs(os.path.dirname(csv_path), exist_ok=True)
-    df.to_csv(csv_path, index=False)
+    merged = merged.loc[:, ~merged.columns.duplicated()]
+    return merged
 
 
 def main():
-    args = parse_args()
-    input_dir = args.input_dir
-    output_root = args.output_dir
-
-    if not os.path.isdir(input_dir):
-        print(f"Input directory '{input_dir}' not found.", file=sys.stderr)
-        sys.exit(1)
-
-    os.makedirs(output_root, exist_ok=True)
-
-    grib_files = [
-        os.path.join(input_dir, fname)
-        for fname in os.listdir(input_dir)
-        if fname.lower().endswith(".grib")
-    ]
-
-    if not grib_files:
-        print("No .grib files found.")
+    files = list_files()
+    if not files:
+        print("No GRIB files found in", INPUT_DIR)
         return
 
-    converted = 0
-    for grib_path in sorted(grib_files):
-        site_id = extract_site_id(grib_path)
-        if site_id is None:
-            print(f"Skipping '{grib_path}' (unable to determine site id).")
+    files_by_site = {}
+    for f in files:
+        parsed = parse_fname(f)
+        if parsed is None:
+            print("Skipping (pattern mismatch):", f.name)
+            continue
+        site, year, month = parsed
+        files_by_site.setdefault(site, []).append((f, year, month))
+
+    for site in sorted(files_by_site):
+        print(f"\nProcessing site {site}")
+        rows = []
+        for path, year, month in tqdm(files_by_site[site], desc=f"Site {site}", unit="file"):
+            df = process_single_file(path)
+            if df is None or df.empty:
+                print("  WARN: no data from", path.name)
+                continue
+            df["site"] = site
+            df["file_year"] = year
+            df["file_month"] = month
+            df["source_file"] = path.name
+            rows.append(df)
+
+        if not rows:
+            print("  No data for site", site)
             continue
 
-        if args.site and site_id != args.site:
-            continue
+        merged = pd.concat(rows, ignore_index=True, sort=False)
 
-        site_dir = os.path.join(output_root, f"site_{site_id:02d}")
-        csv_filename = os.path.splitext(os.path.basename(grib_path))[0] + ".csv"
-        csv_path = os.path.join(site_dir, csv_filename)
+        if "time" in merged.columns:
+            merged = merged.sort_values("time").drop_duplicates().reset_index(drop=True)
+            merged["year"] = merged["time"].dt.year
+            merged["month"] = merged["time"].dt.month
+            merged["day"] = merged["time"].dt.day
+            merged["hour"] = merged["time"].dt.hour
 
-        if not args.overwrite and os.path.exists(csv_path):
-            print(f"[skip] {csv_path} already exists.")
-            continue
-
-        print(f"[convert] {grib_path} -> {csv_path}")
-        try:
-            grib_to_csv(grib_path, csv_path)
-            converted += 1
-        except Exception as exc:
-            print(f"[error] Failed converting '{grib_path}': {exc}")
-
-    if converted == 0:
-        print("No files converted.")
-    else:
-        print(f"Converted {converted} file(s).")
+        out = OUTPUT_DIR / f"cams_site_{site}_merged.csv"
+        merged.to_csv(out, index=False)
+        print("Saved:", out, "rows:", len(merged))
 
 
 if __name__ == "__main__":
     main()
-
