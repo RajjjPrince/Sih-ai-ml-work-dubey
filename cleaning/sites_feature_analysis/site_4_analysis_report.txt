@@ -1,0 +1,121 @@
+================================================================================
+SITE 4 - FEATURE ANALYSIS REPORT
+================================================================================
+
+Generated on: 2025-12-06 10:47:29
+
+Dataset Information:
+  - Original shape: (71563, 79)
+  - Total features: 79
+  - Total samples: 71563
+  - Missing values: 958805
+  - Memory usage: 41.49 MB
+  - Date range: 2019-07-11 00:00:00 to 2024-06-30 00:00:00
+
+
+Target Variables:
+  - NO2_target:
+    Mean: 33.7794
+    Std: 22.9430
+    Min: 0.2000
+    Max: 192.3300
+    Missing: 0 (0.00%)
+  - O3_target:
+    Mean: 35.2158
+    Std: 35.7554
+    Min: 0.1000
+    Max: 199.2000
+    Missing: 0 (0.00%)
+
+
+Missing Values by Column:
+  Total columns with missing values: 35
+
+  Column Name | Missing Count | Missing Percentage
+  ----------------------------------------------------------------------
+  ratio_satellite                          |       69,933 |             97.72%
+  NO2_satellite                            |       69,845 |             97.60%
+  HCHO_satellite                           |       69,394 |             96.97%
+  so2_lag_3h                               |       28,627 |             40.00%
+  pm10_lag_3h                              |       28,627 |             40.00%
+  pm2p5_lag_3h                             |       28,627 |             40.00%
+  no2_lag_3h                               |       28,627 |             40.00%
+  no2_lag_1h                               |       28,625 |             40.00%
+  so2_lag_1h                               |       28,625 |             40.00%
+  pm10_lag_1h                              |       28,625 |             40.00%
+  pm2p5_lag_1h                             |       28,625 |             40.00%
+  sp                                       |       28,624 |             40.00%
+  hcho                                     |       28,624 |             40.00%
+  co                                       |       28,624 |             40.00%
+  aluvd                                    |       28,624 |             40.00%
+  aluvp                                    |       28,624 |             40.00%
+  pm1                                      |       28,624 |             40.00%
+  bcaod550                                 |       28,624 |             40.00%
+  aod550                                   |       28,624 |             40.00%
+  pm25_pm10_ratio                          |       28,624 |             40.00%
+  no2_pm25_ratio                           |       28,624 |             40.00%
+  so2                                      |       28,624 |             40.00%
+  no2                                      |       28,624 |             40.00%
+  pm10                                     |       28,624 |             40.00%
+  no                                       |       28,624 |             40.00%
+  pm2p5                                    |       28,624 |             40.00%
+  ratio_satellite_daily                    |       28,603 |             39.97%
+  NO2_satellite_daily                      |       27,243 |             38.07%
+  HCHO_satellite_daily                     |       15,443 |             21.58%
+  no2_rolling_mean_6h                      |        9,984 |             13.95%
+  pm2p5_rolling_mean_6h                    |        9,984 |             13.95%
+  wind_speed_lag_3h                        |            3 |              0.00%
+  t2m_era5_lag_3h                          |            3 |              0.00%
+  t2m_era5_lag_1h                          |            1 |              0.00%
+  wind_speed_lag_1h                        |            1 |              0.00%
+
+
+Top Correlated Features (by absolute correlation):
+
+  NO2_target:
+    1. NO2_target_rolling_mean_6h: 0.9361
+    2. pm1: 0.5678
+    3. so2: 0.5583
+    4. so2_lag_1h: 0.5521
+    5. no2: 0.5399
+    6. pm2p5: 0.5389
+    7. no2_lag_1h: 0.5387
+    8. pm2p5_lag_1h: 0.5350
+    9. pm10: 0.5306
+    10. pm10_lag_1h: 0.5266
+    11. no2_rolling_mean_6h: 0.5248
+    12. pm2p5_rolling_mean_6h: 0.5167
+    13. so2_lag_3h: 0.5149
+    14. co: 0.5070
+    15. no2_lag_3h: 0.5040
+
+  O3_target:
+    1. O3_target_rolling_mean_6h: 0.9407
+    2. relative_humidity_approx: -0.6335
+    3. dewpoint_depression: 0.6325
+    4. blh_era5: 0.5816
+    5. no2_rolling_mean_6h: -0.4812
+    6. no2_lag_3h: -0.4549
+    7. no2_lag_1h: -0.4459
+    8. no2: -0.4350
+    9. blh_wind_interaction: 0.4284
+    10. so2_lag_3h: -0.4140
+    11. so2_lag_1h: -0.4044
+    12. so2: -0.3970
+    13. hour_sin: 0.3958
+    14. solar_elevation: 0.3909
+    15. SZA_deg: -0.3909
+
+
+Feature Categories:
+  Time Features: 9 features
+    year, month, day, hour, day_of_week, hour_sin, hour_cos, month_sin, month_cos
+  Weather Features: 13 features
+    blh_era5, d2m_era5, sp, t2m_era5, tcc_era5, wind_dir_deg, wind_speed, wind_direction_rad, blh_wind_interaction, t2m_era5_lag_1h
+    ... and 3 more
+  Air Quality Features: 34 features
+    NO2_forecast, O3_forecast, NO2_target, O3_target, co, hcho, HCHO_satellite, HCHO_satellite_daily, HCHO_satellite_flag, NO2_satellite
+    ... and 24 more
+  Engineered Features: 21 features
+    dewpoint_depression, relative_humidity_approx, no2_pm25_ratio, pm25_pm10_ratio, blh_wind_interaction, no2_lag_1h, no2_lag_3h, pm2p5_lag_1h, pm2p5_lag_3h, pm10_lag_1h
+    ... and 11 more
