@@ -78,13 +78,30 @@ class TCNEncoder(nn.Module):
     def forward(self, x):
         """
         Args:
-            x: [batch_size, seq_len, input_dim] or [batch_size, input_dim, seq_len]
+            x: [batch_size, seq_len, input_dim] - REQUIRED format
         Returns:
             embedding: [batch_size, hidden_dim]
         """
-        # Ensure input is [batch, channels, seq_len]
-        if len(x.shape) == 3 and x.shape[1] != self.input_dim:
-            x = x.transpose(1, 2)  # [batch, seq_len, features] -> [batch, features, seq_len]
+        # Strict shape validation
+        if x.ndim != 3:
+            raise ValueError(
+                f"hourly_seq must be 3D tensor [batch, seq_len, features], "
+                f"got {x.ndim}D tensor with shape {x.shape}"
+            )
+        
+        # Convert to [batch, features, seq_len] for Conv1D
+        # Conv1D expects channels (features) in dimension 1
+        if x.shape[2] == self.input_dim:
+            # Input is [batch, seq_len, features] - transpose to [batch, features, seq_len]
+            x = x.transpose(1, 2)
+        elif x.shape[1] == self.input_dim:
+            # Already in [batch, features, seq_len] format
+            pass
+        else:
+            raise ValueError(
+                f"Input shape mismatch. Expected [batch, seq_len, {self.input_dim}] or "
+                f"[batch, {self.input_dim}, seq_len], got {x.shape}"
+            )
         
         x = self.initial_conv(x)
         

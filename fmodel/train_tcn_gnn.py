@@ -39,30 +39,42 @@ class HuberLoss(nn.Module):
         return torch.mean(0.5 * quadratic ** 2 + self.delta * linear)
 
 
-def train_epoch(model, train_loader, criterion, optimizer, device):
+def train_epoch(model, train_loader, criterion, optimizer, device, scaler=None):
     """Train for one epoch"""
     model.train()
     total_loss = 0.0
     n_batches = 0
     
     for batch in tqdm(train_loader, desc="Training"):
-        hourly_seq = batch['hourly_seq'].to(device)
-        daily_satellite = batch['daily_satellite'].to(device)
-        static = batch['static'].to(device)
-        target = batch['target'].to(device)
-        edge_index = batch['edge_index'].to(device)
+        # Use non_blocking for faster GPU transfer
+        non_blocking = device.type == 'cuda'
+        hourly_seq = batch['hourly_seq'].to(device, non_blocking=non_blocking)
+        daily_satellite = batch['daily_satellite'].to(device, non_blocking=non_blocking)
+        static = batch['static'].to(device, non_blocking=non_blocking)
+        target = batch['target'].to(device, non_blocking=non_blocking)
+        edge_index = batch['edge_index'].to(device, non_blocking=non_blocking)
         
-        # Forward pass
+        # Forward pass (with mixed precision if enabled)
         optimizer.zero_grad()
-        predictions = model(hourly_seq, daily_satellite, static, edge_index)
         
-        # Compute loss
-        loss = criterion(predictions, target)
-        
-        # Backward pass
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-        optimizer.step()
+        if scaler is not None:
+            # Mixed precision training
+            with torch.cuda.amp.autocast():
+                predictions = model(hourly_seq, daily_satellite, static, edge_index)
+                loss = criterion(predictions, target)
+            
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            # Standard training
+            predictions = model(hourly_seq, daily_satellite, static, edge_index)
+            loss = criterion(predictions, target)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            optimizer.step()
         
         total_loss += loss.item()
         n_batches += 1
@@ -81,11 +93,13 @@ def validate(model, val_loader, criterion, device):
     
     with torch.no_grad():
         for batch in tqdm(val_loader, desc="Validating"):
-            hourly_seq = batch['hourly_seq'].to(device)
-            daily_satellite = batch['daily_satellite'].to(device)
-            static = batch['static'].to(device)
-            target = batch['target'].to(device)
-            edge_index = batch['edge_index'].to(device)
+            # Use non_blocking for faster GPU transfer
+            non_blocking = device.type == 'cuda'
+            hourly_seq = batch['hourly_seq'].to(device, non_blocking=non_blocking)
+            daily_satellite = batch['daily_satellite'].to(device, non_blocking=non_blocking)
+            static = batch['static'].to(device, non_blocking=non_blocking)
+            target = batch['target'].to(device, non_blocking=non_blocking)
+            edge_index = batch['edge_index'].to(device, non_blocking=non_blocking)
             
             # Forward pass
             predictions = model(hourly_seq, daily_satellite, static, edge_index)
@@ -121,7 +135,8 @@ def train(
     num_epochs: int = 100,
     loss_type: str = 'mae',
     patience: int = 10,
-    save_dir: Path = None
+    save_dir: Path = None,
+    use_mixed_precision: bool = False
 ):
     """
     Train TCN-GNN model
@@ -138,7 +153,22 @@ def train(
         patience: Early stopping patience
         save_dir: Directory to save model and results
     """
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    # Detect and set device
+    if torch.cuda.is_available():
+        device = torch.device('cuda')
+        print(f"✓ CUDA available! Using GPU: {torch.cuda.get_device_name(0)}")
+        print(f"  GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
+        # Increase batch size if GPU is available
+        if batch_size < 64:
+            print(f"  Note: Consider increasing batch_size for faster training (current: {batch_size})")
+    elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+        device = torch.device('mps')
+        print(f"✓ MPS (Apple Silicon) available! Using Apple GPU")
+    else:
+        device = torch.device('cpu')
+        print(f"⚠ No GPU detected. Using CPU (training will be slow)")
+        print(f"  Consider using a GPU-enabled environment for faster training")
+    
     print(f"Using device: {device}")
     
     # Create data loaders
@@ -181,6 +211,22 @@ def train(
     
     print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
     
+    # Verify model is on correct device
+    if device.type == 'cuda':
+        print(f"✓ Model moved to GPU: {next(model.parameters()).device}")
+        # Enable cuDNN benchmarking for faster training (if input sizes are constant)
+        torch.backends.cudnn.benchmark = True
+    else:
+        print(f"⚠ Model on CPU (training will be slow)")
+    
+    # Mixed precision training (faster on GPU)
+    use_amp = use_mixed_precision and device.type == 'cuda'
+    if use_amp:
+        print("✓ Using mixed precision training (faster GPU training)")
+        scaler = torch.cuda.amp.GradScaler()
+    else:
+        scaler = None
+    
     # Loss function
     if loss_type == 'mae':
         criterion = nn.L1Loss()
@@ -192,9 +238,10 @@ def train(
     # Optimizer
     optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-5)
     
-    # Learning rate scheduler
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='min', factor=0.5, patience=5, verbose=True
+    # Learning rate scheduler - use CosineAnnealingLR for more stable training
+    # ReduceLROnPlateau can collapse on noisy validation loss
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=num_epochs, eta_min=1e-6
     )
     
     # Training history
@@ -216,13 +263,13 @@ def train(
         print(f"\nEpoch {epoch + 1}/{num_epochs}")
         
         # Train
-        train_loss = train_epoch(model, train_loader, criterion, optimizer, device)
+        train_loss = train_epoch(model, train_loader, criterion, optimizer, device, scaler)
         
         # Validate
         val_loss, val_mae_no2, val_mae_o3 = validate(model, val_loader, criterion, device)
         
-        # Update learning rate
-        scheduler.step(val_loss)
+        # Update learning rate (CosineAnnealingLR doesn't need validation loss)
+        scheduler.step()
         
         # Record history
         history['train_loss'].append(train_loss)
@@ -336,6 +383,8 @@ def main():
                        help='Early stopping patience')
     parser.add_argument('--save_dir', type=str, default='models/tcn_gnn',
                        help='Directory to save model and results')
+    parser.add_argument('--use_mixed_precision', action='store_true',
+                       help='Use mixed precision training (faster on GPU)')
     
     args = parser.parse_args()
     
@@ -362,7 +411,8 @@ def main():
         num_epochs=args.num_epochs,
         loss_type=args.loss_type,
         patience=args.patience,
-        save_dir=save_dir
+        save_dir=save_dir,
+        use_mixed_precision=args.use_mixed_precision
     )
     
     print("\nTraining completed!")
