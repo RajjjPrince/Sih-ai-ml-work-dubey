@@ -1,27 +1,12 @@
 'use client';
 
-import React, { useEffect, useMemo } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
-import L, { LatLngBoundsExpression, LatLngTuple } from 'leaflet';
-import 'leaflet/dist/leaflet.css';
-import 'leaflet.heat';
+import React, { useEffect, useMemo, useState } from 'react';
+import type { LatLngBoundsExpression, LatLngTuple } from 'leaflet';
 
-import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png';
-import markerIcon from 'leaflet/dist/images/marker-icon.png';
-import markerShadow from 'leaflet/dist/images/marker-shadow.png';
-
-// Fix marker icons for Vite builds
+// Only import leaflet CSS on client side
 if (typeof window !== 'undefined') {
-  const DefaultIcon = L.icon({
-    iconUrl: markerIcon,
-    iconRetinaUrl: markerIcon2x,
-    shadowUrl: markerShadow,
-    iconSize: [25, 41],
-    iconAnchor: [12, 41],
-    popupAnchor: [1, -34],
-    shadowSize: [41, 41],
-  });
-  L.Marker.prototype.options.icon = DefaultIcon;
+  import('leaflet/dist/leaflet.css');
+  import('leaflet.heat');
 }
 
 type Pollutant = 'O3' | 'NO2';
@@ -37,54 +22,6 @@ type SiteReading = {
   NO2_actual: number;
   NO2_predicted: number;
   updatedAt: string;
-};
-
-const HeatLayer: React.FC<{
-  points: Array<[number, number, number]>;
-  radius?: number;
-  blur?: number;
-  gradient?: Record<string, string>;
-}> = ({ points, radius = 28, blur = 18, gradient }) => {
-  const map = useMap();
-
-  useEffect(() => {
-    if (!map) return;
-    const layer = (L as any).heatLayer(points, {
-      radius,
-      blur,
-      maxZoom: 17,
-      minOpacity: 0.15,
-      gradient,
-    });
-    layer.addTo(map);
-    return () => {
-      map.removeLayer(layer);
-    };
-  }, [map, points, radius, blur, gradient]);
-
-  return null;
-};
-
-// Component to fit map bounds to show all markers
-const FitBounds: React.FC<{ sites: SiteReading[] }> = ({ sites }) => {
-  const map = useMap();
-
-  useEffect(() => {
-    if (!map || sites.length === 0) return;
-    
-    // Calculate bounds from all site locations
-    const bounds = L.latLngBounds(
-      sites.map(site => [site.lat, site.lon] as LatLngTuple)
-    );
-    
-    // Fit bounds with padding to ensure all markers are visible
-    map.fitBounds(bounds, {
-      padding: [50, 50], // Add padding so markers aren't at the edge
-      maxZoom: 12, // Limit max zoom to keep overview
-    });
-  }, [map, sites]);
-
-  return null;
 };
 
 type DelhiAirMapContentProps = {
@@ -108,6 +45,107 @@ export default function DelhiAirMapContent({
   gradient,
   range,
 }: DelhiAirMapContentProps) {
+  const [isMounted, setIsMounted] = useState(false);
+  const [MapComponents, setMapComponents] = useState<{
+    MapContainer: any;
+    TileLayer: any;
+    Marker: any;
+    Popup: any;
+    HeatLayer: React.FC<{
+      points: Array<[number, number, number]>;
+      radius?: number;
+      blur?: number;
+      gradient?: Record<string, string>;
+    }>;
+    FitBounds: React.FC<{ sites: SiteReading[] }>;
+  } | null>(null);
+
+  // Dynamically import react-leaflet and leaflet only on client side
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    
+    Promise.all([
+      import('react-leaflet'),
+      import('leaflet'),
+      import('leaflet/dist/leaflet.css'),
+      import('leaflet.heat'),
+      import('leaflet/dist/images/marker-icon-2x.png'),
+      import('leaflet/dist/images/marker-icon.png'),
+      import('leaflet/dist/images/marker-shadow.png'),
+    ]).then(([reactLeaflet, L, , , markerIcon2x, markerIcon, markerShadow]) => {
+      const { MapContainer, TileLayer, Marker, Popup, useMap } = reactLeaflet;
+      
+      // Fix marker icons for Vite builds
+      const DefaultIcon = L.default.icon({
+        iconUrl: markerIcon.default,
+        iconRetinaUrl: markerIcon2x.default,
+        shadowUrl: markerShadow.default,
+        iconSize: [25, 41],
+        iconAnchor: [12, 41],
+        popupAnchor: [1, -34],
+        shadowSize: [41, 41],
+      });
+      L.default.Marker.prototype.options.icon = DefaultIcon;
+
+      // Create HeatLayer component
+      const HeatLayerComponent: React.FC<{
+        points: Array<[number, number, number]>;
+        radius?: number;
+        blur?: number;
+        gradient?: Record<string, string>;
+      }> = ({ points, radius = 28, blur = 18, gradient }) => {
+        const map = useMap();
+
+        useEffect(() => {
+          if (!map) return;
+          const layer = (L.default as any).heatLayer(points, {
+            radius,
+            blur,
+            maxZoom: 17,
+            minOpacity: 0.15,
+            gradient,
+          });
+          layer.addTo(map);
+          return () => {
+            map.removeLayer(layer);
+          };
+        }, [map, points, radius, blur, gradient]);
+
+        return null;
+      };
+
+      // Create FitBounds component
+      const FitBoundsComponent: React.FC<{ sites: SiteReading[] }> = ({ sites }) => {
+        const map = useMap();
+
+        useEffect(() => {
+          if (!map || sites.length === 0) return;
+          
+          const bounds = L.default.latLngBounds(
+            sites.map(site => [site.lat, site.lon] as LatLngTuple)
+          );
+          
+          map.fitBounds(bounds, {
+            padding: [50, 50],
+            maxZoom: 12,
+          });
+        }, [map, sites]);
+
+        return null;
+      };
+
+      setMapComponents({
+        MapContainer,
+        TileLayer,
+        Marker,
+        Popup,
+        HeatLayer: HeatLayerComponent,
+        FitBounds: FitBoundsComponent,
+      });
+      setIsMounted(true);
+    });
+  }, []);
+
   const heatPoints = useMemo(() => {
     return data.map((site) => {
       const key = `${pollutant}_${dataset}` as keyof SiteReading;
@@ -118,19 +156,32 @@ export default function DelhiAirMapContent({
     });
   }, [data, pollutant, dataset, range]);
 
+  // Don't render map until components are loaded and mounted
+  if (!isMounted || !MapComponents) {
+    return (
+      <div className="relative h-[420px] w-full flex items-center justify-center">
+        <p className="text-sm text-slate-600">Loading map...</p>
+      </div>
+    );
+  }
+
+  const { MapContainer, TileLayer, Marker, Popup, HeatLayer, FitBounds } = MapComponents;
+
   return (
     <div className="relative h-[420px] w-full">
       <MapContainer
-        center={center}
-        zoom={11}
-        minZoom={9}
-        maxZoom={16}
-        maxBounds={bounds}
-        maxBoundsViscosity={1.0}
-        scrollWheelZoom
-        className="h-full w-full"
+        {...({
+          center: center as [number, number],
+          zoom: 11,
+          minZoom: 9,
+          maxZoom: 16,
+          maxBounds: bounds,
+          maxBoundsViscosity: 1.0,
+          scrollWheelZoom: true,
+          className: 'h-full w-full',
+        } as any)}
       >
-        <TileLayer attribution='&copy; OpenStreetMap' url={tileUrl} />
+        <TileLayer {...({ attribution: '&copy; OpenStreetMap', url: tileUrl } as any)} />
         <FitBounds sites={data} />
         <HeatLayer points={heatPoints} gradient={gradient} />
 
